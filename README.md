@@ -1,124 +1,176 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Chor-Police Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Real-time multiplayer backend for the classic Bengali party game **Chor–Dakat** (thief and bandit), built with [NestJS](https://docs.nestjs.com) and [Socket.IO](https://socket.io). Players join a room with a 6-digit code, secretly draw paper slips to receive roles, and the Police tries to identify the thief (Chor) or bandit (Dakat) the Raja has targeted.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## How the game works
 
-## Description
+- **Rooms & lobby:** The host creates a room and shares the 6-digit code. Players join in real time, see the player list, and chat before a match starts.
+- **Picking:** Each round, every player picks one of the shuffled paper slips. Each slip has a permanent identity icon (🐴 🍬 🎈 🍕 ⚓ 🌵 🌮 🧸) so everyone sees the same icon per slip. Players who don't pick in time get slips auto-assigned.
+- **Role reveal:** Slips assign the roles below. Chor and Dakat are publicly masked as `CHOR_OR_DAKAT`; only they (and each other) know who is who.
+- **Target selection:** The Raja picks which role the Police should hunt: Chor or Dakat.
+- **Guessing:** The Police picks one suspect player. If the suspect's role matches the Raja's target, the catch is successful.
+- **Scoring:** Everyone earns their role's base points each round; the Police earns nothing on a wrong guess, and the caught target earns nothing on a correct catch.
+- **Match end:** The game ends when a player reaches `targetScore` (e.g. 3000) or after `maxRounds` rounds. The host can authorize players to start the next round, or end the match early and return everyone to the lobby.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+### Roles & base points (per round)
 
-## Project setup
+| Role | English | Points |
+| --- | --- | --- |
+| RAJA | King | 1000 |
+| POLICE | Police | 800 (0 on a wrong guess) |
+| CHOR | Thief | 500 |
+| DAKAT | Bandit | 400 |
+| JHARUDAR | Sweeper | 200 |
+| CLEANER | Cleaner | 200 |
+| PAGOL | Madman | 50 |
+| CHAGOL | Goat | 100 |
+
+Role distribution scales with the player count (**5–8 players required**):
+
+| Players | Roles dealt |
+| --- | --- |
+| 5 | Raja, Police, Chor, Dakat, Jharudar |
+| 6 | + Cleaner |
+| 7 | + Pagol |
+| 8 | + Chagol |
+
+## Features
+
+- Socket.IO gateways for rooms, game, and chat with namespace-style event naming (`room:*`, `game:*`, `chat:*`)
+- Room lifecycle: create, join, leave, auto-close when empty
+- Disconnect handling and reconnect via `reconnectToken`, including in-game state and private-role resync
+- Live room/player updates, aborting a game when a player leaves mid-match
+- Host-controlled match settings (`targetScore`, `maxRounds`) and next-round flow
+- In-room chat (max 200 characters) and a fixed set of reactions (😂 🕵️ 🤫 😱 👑 🔥 👀 👍)
+- All state kept in memory; no database required
+
+## Tech stack
+
+- [NestJS 12](https://docs.nestjs.com) (Express)
+- Socket.IO via `@nestjs/platform-socket.io`
+- TypeScript (ESM), Vitest for tests, OxLint for linting
+
+## Getting started
 
 ```bash
-$ npm install
+npm install
 ```
 
-## Compile and run the project
+### Configure (optional)
+
+Create a `.env` in the project root — it is loaded automatically:
+
+```env
+PORT=3000
+BASE_URL=http://localhost:3000
+```
+
+### Run
 
 ```bash
-# development
-$ npm run start
+# development (watch mode)
+npm run start:dev
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+# production
+npm run build
+npm run start:prod
 ```
 
-## Run tests
+The server listens on `PORT` (default `3000`).
+
+## Scripts
+
+| Script | Description |
+| --- | --- |
+| `npm run build` | Compile the project (`nest build`) |
+| `npm run start:dev` | Start in watch mode |
+| `npm run start:prod` | Run the compiled output (`dist/main.js`) |
+| `npm run test` | Run unit tests (Vitest) |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run test:cov` | Run tests with coverage |
+| `npm run test:e2e` | Run e2e tests |
+| `npm run lint` | Lint with OxLint |
+| `npm run format` | Format with Prettier |
+
+## Socket.IO API
+
+All communication happens over WebSocket using the events below. Payloads are validated server-side and errors are reported back on `room:error`, `game:error`, or `chat:error`.
+
+### Rooms (`rooms.gateway.ts`)
+
+| Client → server | Server → client | Notes |
+| --- | --- | --- |
+| `room:create` `{ playerName }` | `room:created` | Creates a new room; returns `reconnectToken` |
+| `room:join` `{ roomCode, playerName }` | `room:joined`, `room:updated` | |
+| `room:reconnect` `{ roomCode, reconnectToken }` | `room:reconnected`, `room:updated` | |
+| `room:leave` | `room:left`, `room:updated`, `room:closed` | Host leaving closes the room |
+| — (disconnect) | `room:updated` | Player marked disconnected |
+
+### Game (`game.gateway.ts`)
+
+| Client → server | Server → client | Notes |
+| --- | --- | --- |
+| `game:start` `{ settings? }` | `game:started` | Host only; 5–8 players, all connected |
+| `game:pick-paper` `{ paperId }` | `game:state-updated`, then `game:roles-revealed` + private `game:my-role` | When all have picked |
+| `game:select-target` `{ targetRole }` | `game:target-selected` | Raja only; CHOR or DAKAT |
+| `game:select-suspect` `{ selectedPlayerId }` | `game:police-selecting` | Police hover/preview while guessing |
+| `game:guess-player` `{ selectedPlayerId }` | `game:round-result` or `game:match-ended` | Police only |
+| `game:allow-next-round` `{ playerId }` | `game:next-round-permission` | Host authorizes a player |
+| `game:next-round` | `game:started` | Host or authorized player |
+| `game:finish` | `game:match-ended` | End the match early |
+| `game:back-to-lobby` | `game:back-to-lobby` | Host only, after game over |
+| — (reconnect) | `game:started`, `game:state-updated`, `game:my-role` | State resync on rejoin |
+
+### Chat (`chat.gateway.ts`)
+
+| Client → server | Server → client | Notes |
+| --- | --- | --- |
+| `chat:send-message` `{ message }` | `chat:message` | Trimmed; max 200 chars |
+| `chat:send-reaction` `{ reaction }` | `chat:reaction` | Emoji from the allowed set |
+
+## Project structure
+
+```
+src/
+├── main.ts                    # Bootstrap; loads .env, listens on PORT
+├── app.module.ts              # Root module
+└── modules/
+    ├── rooms/                 # Room lifecycle, join/reconnect, public state
+    ├── game/                  # Game state machine, roles, scoring, game gateway
+    ├── chat/                  # In-room chat and reactions
+    └── players/               # Player plumbing shared across gateways
+```
+
+Key files:
+
+- `src/modules/game/game.service.ts` — rounds, role dealing, scoring, match-end rules
+- `src/modules/game/scoring.ts` — per-role base points
+- `src/modules/rooms/rooms.service.ts` — in-memory room registry and reconnect tokens
+
+## Testing
 
 ```bash
 # unit tests
-$ npm run test
+npm run test
 
 # e2e tests
-$ npm run test:e2e
+npm run test:e2e
 
-# test coverage
-$ npm run test:cov
+# coverage
+npm run test:cov
 ```
 
 ## Deployment
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+This is a stateful WebSocket server (all room/game state lives in memory), so a single instance is expected. Any Node host works — e.g. deploy with the NestJS CLI:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm install -g @nestjs/mau
+mau deploy
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-To add it to this project:
-
-```bash
-$ npm install @nestjs/observe
-```
-
-Then follow the [setup guide](https://docs.nestjs.com/observability/overview) - it takes a single import and an app key.
-
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Remember to set `PORT` and (if behind a proxy) `BASE_URL`, and relax the `origin: '*'` CORS settings in the gateway files (`rooms.gateway.ts`, `game.gateway.ts`, `chat.gateway.ts`) before going to production.
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+UNLICENSED — private project.
