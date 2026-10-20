@@ -13,6 +13,9 @@ import type {
   RoomPlayer,
 } from './room.types.js';
 
+/** How long a disconnected seat is held before it is released. */
+export const DISCONNECT_GRACE_MS = 2 * 60 * 1000;
+
 @Injectable()
 export class RoomsService {
   private readonly rooms = new Map<string, GameRoom>();
@@ -21,11 +24,15 @@ export class RoomsService {
   private onRoomEmpty?: (roomCode: string) => void;
   private onRoomPlayersChanged?: (roomCode: string) => void;
   private onPlayerReconnected?: (roomCode: string, playerId: string) => void;
+  private onPlayerTimedOut?: (roomCode: string, playerName: string) => void;
   // Reconnect token -> player ID
   private readonly reconnectTokens = new Map<string, string>();
 
   // Player ID -> current reconnect token
   private readonly playerReconnectTokens = new Map<string, string>();
+
+  // `${roomCode}:${playerId}` -> pending seat-release timer
+  private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
 
   setRoomPlayersChangedHandler(handler: (roomCode: string) => void): void {
     this.onRoomPlayersChanged = handler;
@@ -43,6 +50,21 @@ export class RoomsService {
     this.onPlayerReconnected = handler;
   }
 
+  setPlayerTimedOutHandler(
+    handler: (roomCode: string, playerName: string) => void,
+  ): void {
+    this.onPlayerTimedOut = handler;
+  }
+
+  /**
+   * Announces that a seat is live again. The transport layer calls this once
+   * the returning socket is registered, so listeners (game state resync) can
+   * find that socket.
+   */
+  notifyPlayerReconnected(roomCode: string, playerId: string): void {
+    this.onPlayerReconnected?.(roomCode, playerId);
+  }
+
   createRoom(playerName: string): CreateRoomResult {
     const name = this.validatePlayerName(playerName);
 
@@ -57,6 +79,7 @@ export class RoomsService {
       name,
       isHost: true,
       isConnected: true,
+      seatPin: this.generateSeatPin(),
     };
 
     const room: GameRoom = {
@@ -101,6 +124,7 @@ export class RoomsService {
       name,
       isHost: false,
       isConnected: true,
+      seatPin: this.generateSeatPin(),
     };
 
     room.players.push(player);
@@ -158,6 +182,7 @@ export class RoomsService {
       return room;
     }
 
+    this.cancelDisconnectTimeout(code, playerId);
     this.revokeReconnectToken(playerId);
 
     room.players = room.players.filter((item) => item.id !== playerId);
@@ -192,6 +217,8 @@ export class RoomsService {
 
     player.isConnected = false;
 
+    this.scheduleDisconnectTimeout(roomCode, playerId);
+
     return room;
   }
 
@@ -202,6 +229,8 @@ export class RoomsService {
     if (!player) {
       throw new NotFoundException('Player not found in this room.');
     }
+
+    this.cancelDisconnectTimeout(roomCode, playerId);
 
     player.isConnected = true;
 
@@ -237,15 +266,146 @@ export class RoomsService {
 
     const newReconnectToken = this.issueReconnectToken(playerId);
 
-    player.isConnected = true;
+    this.cancelDisconnectTimeout(roomCode, playerId);
 
-    this.onPlayerReconnected?.(roomCode, playerId);
+    player.isConnected = true;
 
     return {
       room,
       player,
       reconnectToken: newReconnectToken,
     };
+  }
+
+  /**
+   * Restores a seat from a browser that no longer has the reconnect token
+   * (e.g. the browser was closed). The player must know the room code, the
+   * name they joined with, and the 4-digit PIN that was issued to that seat.
+   */
+  reclaimSeat(
+    roomCode: string,
+    playerName: string,
+    seatPin: string,
+  ): ReconnectPlayerResult {
+    const code = this.validateRoomCode(roomCode);
+    const name = this.validatePlayerName(playerName);
+
+    if (typeof seatPin !== 'string' || !/^\d{4}$/.test(seatPin.trim())) {
+      throw new BadRequestException('Seat PIN must be exactly 4 digits.');
+    }
+
+    const room = this.getRoom(code);
+    const pin = seatPin.trim();
+    const player = room.players.find(
+      (item) => item.name.toLowerCase() === name.toLowerCase(),
+    );
+
+    if (!player) {
+      throw new NotFoundException(
+        'No player with that name is in this room.',
+      );
+    }
+
+    if (player.seatPin !== pin) {
+      throw new BadRequestException('Incorrect seat PIN.');
+    }
+
+    if (player.isConnected) {
+      throw new BadRequestException(
+        'That seat is still in use. Ask the host to remove it first.',
+      );
+    }
+
+    this.revokeReconnectToken(player.id);
+
+    const reconnectToken = this.issueReconnectToken(player.id);
+
+    this.cancelDisconnectTimeout(code, player.id);
+
+    player.isConnected = true;
+
+    return { room, player, reconnectToken };
+  }
+
+  /**
+   * Host-only removal of another player (e.g. a seat that went dark).
+   * Returns the room after removal, or undefined if the room is now empty.
+   */
+  kickPlayer(
+    roomCode: string,
+    hostId: string,
+    targetPlayerId: string,
+  ): { room: GameRoom | undefined; playerName: string } {
+    const room = this.getRoom(roomCode);
+
+    if (room.hostId !== hostId) {
+      throw new BadRequestException('Only the host can remove players.');
+    }
+
+    if (targetPlayerId === hostId) {
+      throw new BadRequestException('The host cannot remove themselves.');
+    }
+
+    const target = room.players.find((item) => item.id === targetPlayerId);
+
+    if (!target) {
+      throw new NotFoundException('Player not found in this room.');
+    }
+
+    const playerName = target.name;
+
+    return { room: this.removePlayer(room.code, targetPlayerId), playerName };
+  }
+
+  private scheduleDisconnectTimeout(
+    roomCode: string,
+    playerId: string,
+  ): void {
+    const key = this.getPlayerKey(roomCode, playerId);
+
+    if (this.disconnectTimers.has(key)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.disconnectTimers.delete(key);
+
+      const room = this.rooms.get(roomCode);
+      const player = room?.players.find((item) => item.id === playerId);
+
+      // The player came back or the room is gone: nothing to release.
+      if (!room || !player || player.isConnected) {
+        return;
+      }
+
+      const playerName = player.name;
+
+      this.removePlayer(roomCode, playerId);
+      this.onPlayerTimedOut?.(roomCode, playerName);
+    }, DISCONNECT_GRACE_MS);
+
+    // Never keep the process alive just for a seat timer.
+    timer.unref?.();
+
+    this.disconnectTimers.set(key, timer);
+  }
+
+  private cancelDisconnectTimeout(roomCode: string, playerId: string): void {
+    const key = this.getPlayerKey(roomCode, playerId);
+    const timer = this.disconnectTimers.get(key);
+
+    if (timer) {
+      clearTimeout(timer);
+      this.disconnectTimers.delete(key);
+    }
+  }
+
+  private getPlayerKey(roomCode: string, playerId: string): string {
+    return `${roomCode}:${playerId}`;
+  }
+
+  private generateSeatPin(): string {
+    return randomInt(1000, 10000).toString();
   }
 
   private issueReconnectToken(playerId: string): string {

@@ -10,7 +10,12 @@ import {
 import { Server, Socket } from 'socket.io';
 
 import { RoomsService } from './rooms.service.js';
-import type { CreateRoomPayload, JoinRoomPayload } from './room.types.js';
+import type {
+  CreateRoomPayload,
+  JoinRoomPayload,
+  KickPlayerPayload,
+  ReclaimSeatPayload,
+} from './room.types.js';
 
 @WebSocketGateway({
   cors: {
@@ -21,9 +26,27 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
-  private readonly activeSocketIds = new Map<string, string>();
+  private readonly activeSocketIds = new Map<string, string>();  constructor(private readonly roomsService: RoomsService) {
+    // A seat that stays empty past the grace period is released so the
+    // remaining players are not blocked by a player who never returns.
+    this.roomsService.setPlayerTimedOutHandler(
+      (roomCode: string, playerName: string) => {
+        const room = this.roomsService.getRoomIfExists(roomCode);
 
-  constructor(private readonly roomsService: RoomsService) {}
+        if (room) {
+          this.server
+            .to(roomCode)
+            .emit('room:updated', this.roomsService.getPublicState(room));
+        }
+
+        this.server.to(roomCode).emit('room:player-removed', {
+          playerName,
+          reason: 'timeout',
+          message: `${playerName} did not come back in time and lost their seat.`,
+        });
+      },
+    );
+  }
 
   handleConnection(client: Socket): void {
     console.log(`Connected: ${client.id}`);
@@ -82,6 +105,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
           isConnected: player.isConnected,
         },
         reconnectToken,
+        seatPin: player.seatPin,
       });
 
       console.log(`Room created: ${room.code}, host: ${player.name}`);
@@ -115,6 +139,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
           isConnected: player.isConnected,
         },
         reconnectToken,
+        seatPin: player.seatPin,
       });
 
       this.server
@@ -139,10 +164,10 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       this.ensureNotInRoom(client);
 
-      void client.join(body?.roomCode);
       const { room, player, reconnectToken } =
         this.roomsService.reconnectPlayer(body?.roomCode, body?.reconnectToken);
 
+      void client.join(room.code);
       this.registerPlayerSocket(client, room.code, player.id);
 
       client.emit('room:reconnected', {
@@ -154,13 +179,112 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
           isConnected: player.isConnected,
         },
         reconnectToken,
+        seatPin: player.seatPin,
       });
 
       this.server
         .to(room.code)
         .emit('room:updated', this.roomsService.getPublicState(room));
 
+      // Only now that this socket is registered can the game state be synced
+      // back to it, so the returning player lands on the live board.
+      this.roomsService.notifyPlayerReconnected(room.code, player.id);
+
       console.log(`Player reconnected to room ${room.code}: ${player.name}`);
+    } catch (error: unknown) {
+      this.emitError(client, error);
+    }
+  }
+
+  @SubscribeMessage('room:reclaim')
+  handleReclaimSeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: ReclaimSeatPayload,
+  ): void {
+    try {
+      this.ensureNotInRoom(client);
+
+      const { room, player, reconnectToken } = this.roomsService.reclaimSeat(
+        body?.roomCode,
+        body?.playerName,
+        body?.seatPin,
+      );
+
+      void client.join(room.code);
+      this.registerPlayerSocket(client, room.code, player.id);
+
+      client.emit('room:reconnected', {
+        ...this.roomsService.getPublicState(room),
+        player: {
+          id: player.id,
+          name: player.name,
+          isHost: player.isHost,
+          isConnected: player.isConnected,
+        },
+        reconnectToken,
+        seatPin: player.seatPin,
+      });
+
+      this.server
+        .to(room.code)
+        .emit('room:updated', this.roomsService.getPublicState(room));
+
+      this.roomsService.notifyPlayerReconnected(room.code, player.id);
+
+      console.log(`Seat reclaimed in room ${room.code}: ${player.name}`);
+    } catch (error: unknown) {
+      this.emitError(client, error);
+    }
+  }
+
+  @SubscribeMessage('room:kick')
+  handleKickPlayer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: KickPlayerPayload,
+  ): void {
+    try {
+      const roomCode = client.data.roomCode as string | undefined;
+      const playerId = client.data.playerId as string | undefined;
+
+      if (!roomCode || !playerId) {
+        throw new Error('You are not in a room.');
+      }
+
+      if (!body?.playerId) {
+        throw new Error('Player ID is required.');
+      }
+
+      const { room, playerName } = this.roomsService.kickPlayer(
+        roomCode,
+        playerId,
+        body.playerId,
+      );
+
+      this.disconnectPlayerSockets(roomCode, body.playerId, {
+        roomCode,
+        message: 'The host removed you from the room.',
+      });
+
+      if (!room) {
+        this.server.to(roomCode).emit('room:closed', {
+          roomCode,
+          message: 'The room is now closed.',
+        });
+
+        return;
+      }
+
+      this.server
+        .to(roomCode)
+        .emit('room:updated', this.roomsService.getPublicState(room));
+
+      this.server.to(roomCode).emit('room:player-removed', {
+        playerName,
+        reason: 'kicked',
+        message: `${playerName} was removed by the host.`,
+      });
+
+      console.log(`Player removed from room ${roomCode}: ${playerName}`);
     } catch (error: unknown) {
       this.emitError(client, error);
     }
@@ -237,6 +361,33 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private getPlayerKey(roomCode: string, playerId: string): string {
     return `${roomCode}:${playerId}`;
+  }
+
+  /** Detach every live socket that belongs to a player being removed. */
+  private disconnectPlayerSockets(
+    roomCode: string,
+    playerId: string,
+    kickedPayload: { roomCode: string; message: string },
+  ): void {
+    const playerKey = this.getPlayerKey(roomCode, playerId);
+
+    this.activeSocketIds.delete(playerKey);
+
+    for (const socket of this.server.sockets.sockets.values()) {
+      if (
+        socket.data.roomCode !== roomCode ||
+        socket.data.playerId !== playerId
+      ) {
+        continue;
+      }
+
+      socket.emit('room:kicked', kickedPayload);
+
+      delete socket.data.roomCode;
+      delete socket.data.playerId;
+
+      void socket.leave(roomCode);
+    }
   }
 
   private emitError(client: Socket, error: unknown): void {

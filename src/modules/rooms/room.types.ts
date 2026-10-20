@@ -3,6 +3,8 @@ export interface RoomPlayer {
   name: string;
   isHost: boolean;
   isConnected: boolean;
+  /** 4-digit secret used to reclaim this seat from another browser. */
+  seatPin: string;
 }
 
 export interface GameRoom {
@@ -37,6 +39,16 @@ export interface JoinRoomResult {
   room: GameRoom;
   player: RoomPlayer;
   reconnectToken: string;
+}
+
+export interface ReclaimSeatPayload {
+  roomCode: string;
+  playerName: string;
+  seatPin: string;
+}
+
+export interface KickPlayerPayload {
+  playerId: string;
 }
 
 export interface ReconnectPlayerResult {
