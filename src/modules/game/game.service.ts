@@ -405,7 +405,7 @@ export class GameService {
     const raja = game.players.find((player) => player.id === playerId);
 
     if (!raja || raja.role !== GameRole.RAJA) {
-      throw new BadRequestException('Only Raja can select the target role.');
+      throw new BadRequestException('Only Babu can select the target role.');
     }
 
     if (targetRole !== GameRole.CHOR && targetRole !== GameRole.DAKAT) {
@@ -470,7 +470,7 @@ export class GameService {
     }
 
     if (!game.targetRole) {
-      throw new BadRequestException('Raja has not selected a target role.');
+      throw new BadRequestException('Babu has not selected a target role.');
     }
 
     game.selectedPlayerId = selectedPlayerId;

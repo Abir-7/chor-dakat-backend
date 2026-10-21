@@ -73,7 +73,7 @@ describe('GameService', () => {
     const police = game.players.find((p) => p.role === GameRole.POLICE)!;
     const chor = game.players.find((p) => p.role === GameRole.CHOR)!;
 
-    // Raja selects target CHOR
+    // Babu selects target CHOR
     service.selectTarget('123456', raja.id, GameRole.CHOR);
     expect(game.phase).toBe(GamePhase.GUESSING);
 
@@ -98,7 +98,7 @@ describe('GameService', () => {
     const chor = game.players.find((p) => p.role === GameRole.CHOR)!;
     const dakat = game.players.find((p) => p.role === GameRole.DAKAT)!;
 
-    // Raja selects target CHOR
+    // Babu selects target CHOR
     service.selectTarget('123456', raja.id, GameRole.CHOR);
 
     // Police guesses Dakat instead of Chor
@@ -165,6 +165,6 @@ describe('GameService', () => {
     service.guessPlayer('123456', police.id, chor.id);
 
     expect(game.phase).toBe(GamePhase.GAME_OVER);
-    expect(game.winnerPlayerId).toBe(raja.id); // Raja has highest score (1000)
+    expect(game.winnerPlayerId).toBe(raja.id); // Babu has highest score (1000)
   });
 });

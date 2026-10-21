@@ -1,14 +1,14 @@
 # Chor-Police Backend
 
-Real-time multiplayer backend for the classic Bengali party game **Chor–Dakat** (thief and bandit), built with [NestJS](https://docs.nestjs.com) and [Socket.IO](https://socket.io). Players join a room with a 6-digit code, secretly draw paper slips to receive roles, and the Police tries to identify the thief (Chor) or bandit (Dakat) the Raja has targeted.
+Real-time multiplayer backend for the classic Bengali party game **Chor–Dakat** (thief and bandit), built with [NestJS](https://docs.nestjs.com) and [Socket.IO](https://socket.io). Players join a room with a 6-digit code, secretly draw paper slips to receive roles, and the Police tries to identify the thief (Chor) or bandit (Dakat) the Babu has targeted.
 
 ## How the game works
 
 - **Rooms & lobby:** The host creates a room and shares the 6-digit code. Players join in real time, see the player list, and chat before a match starts.
 - **Picking:** Each round, every player picks one of the shuffled paper slips. Each slip has a permanent identity icon (🐴 🍬 🎈 🍕 ⚓ 🌵 🌮 🧸) so everyone sees the same icon per slip. Players who don't pick in time get slips auto-assigned.
 - **Role reveal:** Slips assign the roles below. Chor and Dakat are publicly masked as `CHOR_OR_DAKAT`; only they (and each other) know who is who.
-- **Target selection:** The Raja picks which role the Police should hunt: Chor or Dakat.
-- **Guessing:** The Police picks one suspect player. If the suspect's role matches the Raja's target, the catch is successful.
+- **Target selection:** The Babu picks which role the Police should hunt: Chor or Dakat.
+- **Guessing:** The Police picks one suspect player. If the suspect's role matches the Babu's target, the catch is successful.
 - **Scoring:** Everyone earns their role's base points each round; the Police earns nothing on a wrong guess, and the caught target earns nothing on a correct catch.
 - **Match end:** The game ends when a player reaches `targetScore` (e.g. 3000) or after `maxRounds` rounds. The host can authorize players to start the next round, or end the match early and return everyone to the lobby.
 
@@ -16,7 +16,7 @@ Real-time multiplayer backend for the classic Bengali party game **Chor–Dakat*
 
 | Role | English | Points |
 | --- | --- | --- |
-| RAJA | King | 1000 |
+| RAJA | Babu | 1000 |
 | POLICE | Police | 800 (0 on a wrong guess) |
 | CHOR | Thief | 500 |
 | DAKAT | Bandit | 400 |
@@ -29,7 +29,7 @@ Role distribution scales with the player count (**5–8 players required**):
 
 | Players | Roles dealt |
 | --- | --- |
-| 5 | Raja, Police, Chor, Dakat, Jharudar |
+| 5 | Babu, Police, Chor, Dakat, Jharudar |
 | 6 | + Cleaner |
 | 7 | + Pagol |
 | 8 | + Chagol |
@@ -112,7 +112,7 @@ All communication happens over WebSocket using the events below. Payloads are va
 | --- | --- | --- |
 | `game:start` `{ settings? }` | `game:started` | Host only; 5–8 players, all connected |
 | `game:pick-paper` `{ paperId }` | `game:state-updated`, then `game:roles-revealed` + private `game:my-role` | When all have picked |
-| `game:select-target` `{ targetRole }` | `game:target-selected` | Raja only; CHOR or DAKAT |
+| `game:select-target` `{ targetRole }` | `game:target-selected` | Babu only; CHOR or DAKAT |
 | `game:select-suspect` `{ selectedPlayerId }` | `game:police-selecting` | Police hover/preview while guessing |
 | `game:guess-player` `{ selectedPlayerId }` | `game:round-result` or `game:match-ended` | Police only |
 | `game:allow-next-round` `{ playerId }` | `game:next-round-permission` | Host authorizes a player |
