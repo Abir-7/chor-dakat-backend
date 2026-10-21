@@ -25,11 +25,12 @@ Real-time multiplayer backend for the classic Bengali party game **Chor–Dakat*
 | PAGOL | Madman | 50 |
 | CHAGOL | Goat | 100 |
 
-Role distribution scales with the player count (**5–8 players required**):
+Role distribution scales with the player count (**4–8 players required**):
 
 | Players | Roles dealt |
 | --- | --- |
-| 5 | Babu, Police, Chor, Dakat, Jharudar |
+| 4 | Babu, Police, Chor, Dakat |
+| 5 | + Jharudar |
 | 6 | + Cleaner |
 | 7 | + Pagol |
 | 8 | + Chagol |
@@ -110,7 +111,7 @@ All communication happens over WebSocket using the events below. Payloads are va
 
 | Client → server | Server → client | Notes |
 | --- | --- | --- |
-| `game:start` `{ settings? }` | `game:started` | Host only; 5–8 players, all connected |
+| `game:start` `{ settings? }` | `game:started` | Host only; 4–8 players, all connected |
 | `game:pick-paper` `{ paperId }` | `game:state-updated`, then `game:roles-revealed` + private `game:my-role` | When all have picked |
 | `game:select-target` `{ targetRole }` | `game:target-selected` | Babu only; CHOR or DAKAT |
 | `game:select-suspect` `{ selectedPlayerId }` | `game:police-selecting` | Police hover/preview while guessing |

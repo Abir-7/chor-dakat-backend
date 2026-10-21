@@ -14,7 +14,7 @@ import { ROLE_SCORES } from './scoring.js';
 
 @Injectable()
 export class GameService {
-  private readonly minPlayers = 5;
+  private readonly minPlayers = 4;
   private readonly maxPlayers = 8;
 
   private readonly gameStates = new Map<string, GameState>();
@@ -32,6 +32,12 @@ export class GameService {
   ];
 
   private readonly roleDistribution: Record<number, GameRole[]> = {
+    4: [
+      GameRole.RAJA,
+      GameRole.POLICE,
+      GameRole.CHOR,
+      GameRole.DAKAT,
+    ],
     5: [
       GameRole.RAJA,
       GameRole.POLICE,

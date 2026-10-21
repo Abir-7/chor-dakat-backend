@@ -27,10 +27,30 @@ describe('GameService', () => {
     expect(gameState.roundNumber).toBe(1);
   });
 
-  it('should reject starting with fewer than 5 players', () => {
+  it('should start game with 4 players and deal the four core roles', () => {
     const players = createPlayers(4);
+    const gameState = service.startGame('123456', 'player-1', players);
+
+    expect(gameState.phase).toBe(GamePhase.PICKING);
+    expect(gameState.players).toHaveLength(4);
+    expect(gameState.papers).toHaveLength(4);
+
+    service.autoPickRemainingPapers('123456');
+
+    expect(gameState.players.map((p) => p.role).sort()).toEqual(
+      [
+        GameRole.RAJA,
+        GameRole.POLICE,
+        GameRole.CHOR,
+        GameRole.DAKAT,
+      ].sort(),
+    );
+  });
+
+  it('should reject starting with fewer than 4 players', () => {
+    const players = createPlayers(3);
     expect(() => service.startGame('123456', 'player-1', players)).toThrow(
-      /At least 5 players are required/,
+      /At least 4 players are required/,
     );
   });
 
