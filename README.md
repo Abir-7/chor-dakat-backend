@@ -42,7 +42,7 @@ Role distribution scales with the player count (**4–8 players required**):
 - Disconnect handling and reconnect via `reconnectToken`, including in-game state and private-role resync
 - Live room/player updates, aborting a game when a player leaves mid-match
 - Host-controlled match settings (`targetScore`, `maxRounds`) and next-round flow
-- In-room chat (max 200 characters) and a fixed set of reactions (😂 🕵️ 🤫 😱 👑 🔥 👀 👍)
+- In-room chat (max 200 characters) and a fixed set of reactions (😂 😭 😕 🤝 🕵️ 🤫 😱 👑 🔥 👀 👍)
 - All state kept in memory; no database required
 
 ## Tech stack

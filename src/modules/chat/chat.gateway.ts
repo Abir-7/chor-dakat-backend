@@ -17,7 +17,19 @@ interface SendReactionPayload {
   reaction: string;
 }
 
-const ALLOWED_REACTIONS = new Set(['😂', '🕵️', '🤫', '😱', '👑', '🔥', '👀', '👍']);
+const ALLOWED_REACTIONS = new Set([
+  '😂',
+  '😭',
+  '😕',
+  '🤝',
+  '🕵️',
+  '🤫',
+  '😱',
+  '👑',
+  '🔥',
+  '👀',
+  '👍',
+]);
 
 @WebSocketGateway({
   cors: {
