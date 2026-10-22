@@ -5,6 +5,8 @@ export interface RoomPlayer {
   isConnected: boolean;
   /** 4-digit secret used to reclaim this seat from another browser. */
   seatPin: string;
+  /** True for a server-side bot that plays automatically via timed actions. */
+  isBot: boolean;
 }
 
 export interface GameRoom {

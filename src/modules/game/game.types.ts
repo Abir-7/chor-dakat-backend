@@ -21,6 +21,8 @@ export interface GamePlayer {
   hasPicked: boolean;
   score: number; // Total score across all rounds
   roundScore: number; // Score earned in the current round
+  /** True when this seat is a server-side bot acting on timers. */
+  isBot?: boolean;
 }
 
 export interface GamePaper {
@@ -53,7 +55,7 @@ export interface GameState {
 }
 
 export type StartGamePlayer = Pick<GamePlayer, 'id' | 'name'> &
-  Partial<Pick<GamePlayer, 'score'>>;
+  Partial<Pick<GamePlayer, 'score' | 'isBot'>>;
 
 export interface AllowNextRoundPayload {
   playerId: string;

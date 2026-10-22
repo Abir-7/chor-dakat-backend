@@ -4,6 +4,7 @@ import {
   MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -11,6 +12,7 @@ import {
 import { Server, Socket } from 'socket.io';
 
 import { GameService } from './game.service.js';
+import { BotService } from './bots.service.js';
 import { GamePhase, GameSettings } from './game.types.js';
 import { GameRole } from './game-role.enum.js';
 import { RoomsService } from '../rooms/rooms.service.js';
@@ -44,21 +46,26 @@ interface AllowNextRoundPayload {
     origin: '*',
   },
 })
-export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class GameGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
+{
   @WebSocketServer()
   server!: Server;
 
   constructor(
     private readonly gameService: GameService,
     private readonly roomsService: RoomsService,
+    private readonly botService: BotService,
   ) {
     this.roomsService.setRoomEmptyHandler((roomCode: string) => {
       this.gameService.removeGame(roomCode);
+      this.botService.clearTimers(roomCode);
     });
 
     this.roomsService.setRoomPlayersChangedHandler((roomCode: string) => {
       const hadGame = this.gameService.getGameState(roomCode) !== undefined;
       this.gameService.removeGame(roomCode);
+      this.botService.clearTimers(roomCode);
       if (hadGame) {
         // Notify remaining players that the game was aborted
         this.server.to(roomCode).emit('game:aborted', {
@@ -76,6 +83,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.handlePlayerReconnectedGameSync(roomCode, playerId);
       },
     );
+
+    // Bot decisions are executed through this gateway so a bot action emits
+    // exactly the same events a real player's action would.
+    this.botService.setHandlers({
+      pickPaper: (roomCode, playerId, paperId) =>
+        this.handleBotPickPaper(roomCode, playerId, paperId),
+      selectTarget: (roomCode, playerId, targetRole) =>
+        this.handleBotSelectTarget(roomCode, playerId, targetRole),
+      guessPlayer: (roomCode, playerId, selectedPlayerId) =>
+        this.handleBotGuess(roomCode, playerId, selectedPlayerId),
+    });
+  }
+
+  afterInit(server: Server): void {
+    this.botService.setServer(server);
   }
 
   handleConnection(client: Socket): void {
@@ -108,6 +130,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         room.players.map((player) => ({
           id: player.id,
           name: player.name,
+          isBot: player.isBot,
         })),
         payload?.settings,
       );
@@ -115,6 +138,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.server
         .to(roomCode)
         .emit('game:started', this.gameService.getPublicGameState(roomCode));
+
+      this.botService.onRoundStarted(roomCode);
     } catch (error: unknown) {
       this.emitError(client, error);
     }
@@ -149,6 +174,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.emitPublicRoleReveal(roomCode);
         this.emitPrivateRoles(roomCode);
       }
+
+      this.botService.onGameStateAdvanced(roomCode);
     } catch (error: unknown) {
       this.emitError(client, error);
     }
@@ -177,6 +204,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         targetRole: payload.targetRole,
         gameState: this.gameService.getPublicGameState(roomCode),
       });
+
+      this.botService.onGameStateAdvanced(roomCode);
     } catch (error: unknown) {
       this.emitError(client, error);
     }
@@ -269,6 +298,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const game = this.gameService.finishMatch(roomCode, playerId);
 
+      this.botService.clearTimers(roomCode);
+
       const payload = {
         phase: game.phase,
         winnerPlayerId: game.winnerPlayerId,
@@ -303,6 +334,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       this.gameService.removeGame(roomCode);
+      this.botService.clearTimers(roomCode);
 
       this.server.to(roomCode).emit('game:back-to-lobby', {
         message: 'Host returned to lobby. Configure settings for the next match.',
@@ -333,12 +365,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         room.players.map((player) => ({
           id: player.id,
           name: player.name,
+          isBot: player.isBot,
         })),
       );
 
       this.server
         .to(roomCode)
         .emit('game:started', this.gameService.getPublicGameState(roomCode));
+
+      this.botService.onRoundStarted(roomCode);
     } catch (error: unknown) {
       this.emitError(client, error);
     }
@@ -380,6 +415,65 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } else {
       this.server.to(roomCode).emit('game:round-result', payload);
     }
+
+    // Bots react to the outcome, like players do after a catch or a miss.
+    const arrested = game.players.find(
+      (player) => player.id === selectedPlayerId,
+    );
+    const caught =
+      !!arrested?.role &&
+      !!game.targetRole &&
+      arrested.role === game.targetRole;
+
+    this.botService.onRoundEnded(roomCode, caught);
+  }
+
+  private handleBotPickPaper(
+    roomCode: string,
+    botId: string,
+    paperId: string,
+  ): void {
+    this.gameService.pickPaper(roomCode, botId, paperId);
+
+    const state = this.gameService.getGameState(roomCode);
+
+    if (!state) {
+      return;
+    }
+
+    this.server
+      .to(roomCode)
+      .emit('game:state-updated', this.gameService.getPublicGameState(roomCode));
+
+    if (state.phase === GamePhase.ROLE_REVEAL) {
+      this.emitPublicRoleReveal(roomCode);
+      this.emitPrivateRoles(roomCode);
+    }
+
+    this.botService.onGameStateAdvanced(roomCode);
+  }
+
+  private handleBotSelectTarget(
+    roomCode: string,
+    botId: string,
+    targetRole: GameRole.CHOR | GameRole.DAKAT,
+  ): void {
+    this.gameService.selectTarget(roomCode, botId, targetRole);
+
+    this.server.to(roomCode).emit('game:target-selected', {
+      targetRole,
+      gameState: this.gameService.getPublicGameState(roomCode),
+    });
+
+    this.botService.onGameStateAdvanced(roomCode);
+  }
+
+  private handleBotGuess(
+    roomCode: string,
+    botId: string,
+    selectedPlayerId: string,
+  ): void {
+    this.processPoliceGuess(roomCode, botId, selectedPlayerId);
   }
 
   private handlePlayerReconnectedGameSync(

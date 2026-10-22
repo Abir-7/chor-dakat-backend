@@ -8,6 +8,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { RoomsService } from '../rooms/rooms.service.js';
+import { ALLOWED_REACTIONS } from './reactions.js';
 
 interface SendMessagePayload {
   message: string;
@@ -16,20 +17,6 @@ interface SendMessagePayload {
 interface SendReactionPayload {
   reaction: string;
 }
-
-const ALLOWED_REACTIONS = new Set([
-  '😂',
-  '😭',
-  '😕',
-  '🤝',
-  '🕵️',
-  '🤫',
-  '😱',
-  '👑',
-  '🔥',
-  '👀',
-  '👍',
-]);
 
 @WebSocketGateway({
   cors: {

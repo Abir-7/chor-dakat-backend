@@ -202,6 +202,7 @@ export class GameService {
         hasPicked: false,
         score: isNewMatch ? 0 : (previousPlayer?.score ?? player.score ?? 0),
         roundScore: 0,
+        isBot: player.isBot ?? false,
       };
     });
 
@@ -318,6 +319,7 @@ export class GameService {
       players: game.players.map((player) => ({
         id: player.id,
         name: player.name,
+        isBot: player.isBot ?? false,
         role:
           game.phase === GamePhase.ROLE_REVEAL ||
           game.phase === GamePhase.GUESSING

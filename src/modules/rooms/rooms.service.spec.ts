@@ -111,6 +111,131 @@ describe('RoomsService seat recovery', () => {
   });
 });
 
+describe('RoomsService bot players', () => {
+  let service: RoomsService;
+
+  beforeEach(() => {
+    service = new RoomsService();
+  });
+
+  it('lets the host add a bot with a default unique name', () => {
+    const created = service.createRoom('Host');
+
+    const { room, bot } = service.addBotPlayer(
+      created.room.code,
+      created.player.id,
+    );
+
+    expect(bot.isBot).toBe(true);
+    expect(bot.isConnected).toBe(true);
+    expect(bot.name).toMatch(/^Bot /);
+    expect(room.players.find((p) => p.id === bot.id)).toBe(bot);
+  });
+
+  it('honors the bot name set by the host', () => {
+    const created = service.createRoom('Host');
+
+    const { bot } = service.addBotPlayer(
+      created.room.code,
+      created.player.id,
+      'Crazy Cop',
+    );
+
+    expect(bot.name).toBe('Crazy Cop');
+  });
+
+  it('refuses to add a bot when non-host triggers the request', () => {
+    const created = service.createRoom('Host');
+    const guest = service.joinRoom(created.room.code, 'Guest').player;
+
+    expect(() =>
+      service.addBotPlayer(created.room.code, guest.id, 'Bot X'),
+    ).toThrow(/Only the host can add bots/);
+  });
+
+  it('rejects a bot name already taken by a human (case-insensitive)', () => {
+    const created = service.createRoom('Host');
+    service.joinRoom(created.room.code, 'Guest');
+
+    expect(() =>
+      service.addBotPlayer(created.room.code, created.player.id, 'GUEST'),
+    ).toThrow(/already taken/);
+  });
+
+  it('keeps the room within the max player limit when adding bots', () => {
+    const created = service.createRoom('Host');
+
+    for (let i = 0; i < 7; i++) {
+      service.addBotPlayer(created.room.code, created.player.id);
+    }
+
+    expect(() =>
+      service.addBotPlayer(created.room.code, created.player.id),
+    ).toThrow(/Room is full/);
+  });
+
+  it('refuses bots while a game is active', () => {
+    const created = service.createRoom('Host');
+    service.setGameActiveChecker(() => true);
+
+    expect(() =>
+      service.addBotPlayer(created.room.code, created.player.id),
+    ).toThrow(/while a game is active/);
+  });
+
+  it('exposes bots in the public room state without leaking secrets', () => {
+    const created = service.createRoom('Host');
+    service.addBotPlayer(created.room.code, created.player.id, 'Bot Buzz');
+
+    const publicState = service.getPublicState(
+      service.getRoom(created.room.code),
+    );
+    const bots = publicState.players.filter((p) => p.isBot);
+
+    expect(bots).toHaveLength(1);
+    expect(bots[0].name).toBe('Bot Buzz');
+    expect(JSON.stringify(publicState)).not.toContain('seatPin');
+  });
+
+  it('transfers the host to a human, never a bot, when the host leaves', () => {
+    const created = service.createRoom('Host');
+    service.joinRoom(created.room.code, 'Guest');
+    const bot = service.addBotPlayer(created.room.code, created.player.id).bot;
+
+    service.removePlayer(created.room.code, created.player.id);
+
+    const room = service.getRoom(created.room.code);
+    const newHost = room.players.find((p) => p.id === room.hostId);
+
+    expect(newHost).toBeDefined();
+    expect(newHost?.isBot).toBe(false);
+    expect(room.players.some((p) => p.id === bot.id)).toBe(true);
+  });
+
+  it('kicks a bot like a regular player when the host removes it', () => {
+    const created = service.createRoom('Host');
+    const bot = service.addBotPlayer(created.room.code, created.player.id).bot;
+
+    const { room, playerName } = service.kickPlayer(
+      created.room.code,
+      created.player.id,
+      bot.id,
+    );
+
+    expect(playerName).toBe(bot.name);
+    expect(room?.players).toHaveLength(1);
+  });
+
+  it('never lets a bot seat be reclaimed with a PIN', () => {
+    const created = service.createRoom('Host');
+    const bot = service.addBotPlayer(created.room.code, created.player.id).bot;
+
+    expect(() =>
+      service.reclaimSeat(created.room.code, bot.name, bot.seatPin),
+    ).toThrow(/still in use/);
+  });
+});
+
 describe('RoomsService disconnect grace period', () => {
   let service: RoomsService;
 

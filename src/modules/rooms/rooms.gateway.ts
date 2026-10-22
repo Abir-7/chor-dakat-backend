@@ -237,6 +237,40 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('room:add-bot')
+  handleAddBot(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body?: { name?: string },
+  ): void {
+    try {
+      const roomCode = client.data.roomCode as string | undefined;
+      const playerId = client.data.playerId as string | undefined;
+
+      if (!roomCode || !playerId) {
+        throw new Error('You are not in a room.');
+      }
+
+      const { bot } = this.roomsService.addBotPlayer(
+        roomCode,
+        playerId,
+        body?.name,
+      );
+
+      this.server
+        .to(roomCode)
+        .emit(
+          'room:updated',
+          this.roomsService.getPublicState(
+            this.roomsService.getRoom(roomCode),
+          ),
+        );
+
+      console.log(`Bot added to room ${roomCode}: ${bot.name}`);
+    } catch (error: unknown) {
+      this.emitError(client, error);
+    }
+  }
+
   @SubscribeMessage('room:kick')
   handleKickPlayer(
     @ConnectedSocket() client: Socket,

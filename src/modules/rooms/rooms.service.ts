@@ -16,6 +16,18 @@ import type {
 /** How long a disconnected seat is held before it is released. */
 export const DISCONNECT_GRACE_MS = 2 * 60 * 1000;
 
+/** Fallback names when the host adds a bot without choosing one. */
+const BOT_NAME_POOL = [
+  'Bot Babu',
+  'Bot Chiku',
+  'Bot Rani',
+  'Bot Ninja',
+  'Bot Guru',
+  'Bot Cobra',
+  'Bot Simba',
+  'Bot Pilot',
+];
+
 @Injectable()
 export class RoomsService {
   private readonly rooms = new Map<string, GameRoom>();
@@ -80,6 +92,7 @@ export class RoomsService {
       isHost: true,
       isConnected: true,
       seatPin: this.generateSeatPin(),
+      isBot: false,
     };
 
     const room: GameRoom = {
@@ -125,6 +138,7 @@ export class RoomsService {
       isHost: false,
       isConnected: true,
       seatPin: this.generateSeatPin(),
+      isBot: false,
     };
 
     room.players.push(player);
@@ -134,6 +148,69 @@ export class RoomsService {
       player,
       reconnectToken: this.issueReconnectToken(player.id),
     };
+  }
+
+  /**
+   * Host-only: adds a server-side bot as a room player. The bot has no socket;
+   * it plays turns and sends reactions on timers driven by the game layer.
+   */
+  addBotPlayer(
+    roomCode: string,
+    hostId: string,
+    requestedName?: string,
+  ): { room: GameRoom; bot: RoomPlayer } {
+    const code = this.validateRoomCode(roomCode);
+    const room = this.getRoom(code);
+
+    if (room.hostId !== hostId) {
+      throw new BadRequestException('Only the host can add bots.');
+    }
+
+    if (this.isGameActive?.(code)) {
+      throw new BadRequestException('Cannot add bots while a game is active.');
+    }
+
+    if (room.players.length >= this.maxPlayers) {
+      throw new BadRequestException('Room is full.');
+    }
+
+    let name = this.pickBotName(room);
+
+    if (requestedName !== undefined && requestedName !== null) {
+      if (typeof requestedName !== 'string') {
+        throw new BadRequestException('Bot name must be a string.');
+      }
+
+      const trimmed = requestedName.trim();
+
+      // An empty request means "give it a good default name".
+      if (trimmed.length > 0) {
+        name = this.validatePlayerName(trimmed);
+      }
+    }
+
+    if (
+      room.players.some(
+        (player) => player.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      throw new BadRequestException(
+        'This player name is already taken in the room.',
+      );
+    }
+
+    const bot: RoomPlayer = {
+      id: randomUUID(),
+      name,
+      isHost: false,
+      isConnected: true,
+      seatPin: this.generateSeatPin(),
+      isBot: true,
+    };
+
+    room.players.push(bot);
+
+    return { room, bot };
   }
 
   getRoom(roomCode: string): GameRoom {
@@ -163,6 +240,7 @@ export class RoomsService {
         name: player.name,
         isHost: player.isHost,
         isConnected: player.isConnected,
+        isBot: player.isBot,
       })),
       maxPlayers: this.maxPlayers,
     };
@@ -194,8 +272,8 @@ export class RoomsService {
     }
 
     if (room.hostId === playerId) {
-      // Transfer host to the first remaining player.
-      const newHost = room.players[0];
+      // Transfer host to the first remaining human, never a server bot.
+      const newHost = room.players.find((item) => !item.isBot) ?? room.players[0];
 
       room.hostId = newHost.id;
 
@@ -402,6 +480,22 @@ export class RoomsService {
 
   private getPlayerKey(roomCode: string, playerId: string): string {
     return `${roomCode}:${playerId}`;
+  }
+
+  private pickBotName(room: GameRoom): string {
+    const lower = (candidate: string) => candidate.toLowerCase();
+
+    const alternatives = BOT_NAME_POOL.filter(
+      (candidate) =>
+        !room.players.some((player) => lower(player.name) === lower(candidate)),
+    );
+
+    if (alternatives.length > 0) {
+      return alternatives[randomInt(alternatives.length)];
+    }
+
+    // Pool exhausted: fall back to a numbered bot name.
+    return `Bot ${randomInt(1000, 10000)}`;
   }
 
   private generateSeatPin(): string {
