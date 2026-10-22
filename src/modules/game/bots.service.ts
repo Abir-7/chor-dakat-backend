@@ -32,6 +32,9 @@ const BOT_THINK_MS = 1200;
 const BOT_THINK_JITTER_MS = 2200;
 /** Per-bot stagger so bots rarely pick in the same instant. */
 const BOT_STAGGER_MS = 400;
+/** Babu and the Police "think" like a human decision: 7-10 seconds. */
+const BOT_DECIDE_MIN_MS = 7000;
+const BOT_DECIDE_MAX_MS = 10000;
 
 const TOTAL_REACTION_CHANCE = 0.45;
 const REACTION_EXTRA_MS = 2400;
@@ -172,8 +175,11 @@ export class BotService {
       );
 
       if (raja?.isBot && !game.targetRole) {
-        this.scheduleTimer(roomCode, `target:${raja.id}`, this.botDelay(0), () =>
-          this.runBotSelectTarget(roomCode, raja.id),
+        this.scheduleTimer(
+          roomCode,
+          `target:${raja.id}`,
+          this.decideDelay(),
+          () => this.runBotSelectTarget(roomCode, raja.id),
         );
       }
     }
@@ -184,8 +190,11 @@ export class BotService {
       );
 
       if (police?.isBot && !game.selectedPlayerId) {
-        this.scheduleTimer(roomCode, `guess:${police.id}`, this.botDelay(0), () =>
-          this.runBotGuess(roomCode, police.id),
+        this.scheduleTimer(
+          roomCode,
+          `guess:${police.id}`,
+          this.decideDelay(),
+          () => this.runBotGuess(roomCode, police.id),
         );
       }
     }
@@ -197,6 +206,11 @@ export class BotService {
       randomInt(BOT_THINK_JITTER_MS) +
       (staggerIndex > 0 ? staggerIndex * BOT_STAGGER_MS : 0)
     );
+  }
+
+  /** Babu's command and the Police arrest land somewhere in a 7-10s window. */
+  private decideDelay(): number {
+    return BOT_DECIDE_MIN_MS + randomInt(BOT_DECIDE_MAX_MS - BOT_DECIDE_MIN_MS);
   }
 
   private runBotPick(roomCode: string, botId: string): void {

@@ -156,8 +156,8 @@ describe('BotService', () => {
 
       const host = gameState.players.find((p) => p.id === hostId)!;
 
-      // If the host holds a deciding role the bot flow stalls; retry until
-      // the bots hold both Babu and Police.
+      // Roles are only assigned when a paper is picked, so the host's role is
+      // still unknown here; skip attempts where the host would have to act.
       if (host.role === GameRole.RAJA || host.role === GameRole.POLICE) {
         continue;
       }
@@ -168,6 +168,22 @@ describe('BotService', () => {
       gameService.pickPaper(roomCode, hostId, unpickedPaper.id);
 
       expect(gameState.phase).toBe(GamePhase.ROLE_REVEAL);
+
+      // If the host turned out to be Babu or Police, the bot flow stalls on
+      // purpose (humans decide): retry until bots hold both roles.
+      const raja = gameState.players.find(
+        (p) => p.role === GameRole.RAJA,
+      )!;
+      if (!raja.isBot) {
+        continue;
+      }
+
+      const police = gameState.players.find(
+        (p) => p.role === GameRole.POLICE,
+      )!;
+      if (!police.isBot) {
+        continue;
+      }
 
       botService.onGameStateAdvanced(roomCode);
       advanceBots(); // bot Babu selects the target
@@ -181,9 +197,6 @@ describe('BotService', () => {
       expect(gameState.phase).toBe(GamePhase.ROUND_RESULT);
       expect(gameState.selectedPlayerId).toBeDefined();
 
-      const police = gameState.players.find(
-        (p) => p.role === GameRole.POLICE,
-      )!;
       expect(police.isBot).toBe(true);
       expect(police.roundScore).toBeGreaterThanOrEqual(0);
       expect(gameState.history).toHaveLength(1);
@@ -191,6 +204,99 @@ describe('BotService', () => {
       finished = true;
     }
 
+    expect(finished).toBe(true);
+  });
+
+  it('bot Babu and bot Police wait like a human: at least 7s, at most 10s', () => {
+    const { roomCode, hostId, players } = ctx;
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    const isHumanlikeDelay = (calls: unknown[][]) =>
+      calls.some((call) => {
+        const delay = Number(call[1]);
+        return delay >= 7000 && delay < 10000;
+      });
+
+    let babuDelaySeen = false;
+    let policeDelaySeen = false;
+    let finished = false;
+
+    for (
+      let attempt = 0;
+      attempt < 120 && !(babuDelaySeen && policeDelaySeen) && !finished;
+      attempt++
+    ) {
+      setTimeoutSpy.mockClear();
+      gameService.removeGame(roomCode);
+      const gameState = gameService.startGame(roomCode, hostId, players);
+      wireHandlers();
+      botService.onRoundStarted(roomCode);
+      advanceBots(); // bots pick their papers
+
+      // Ignore the paper-pick and round-start reaction timers.
+      setTimeoutSpy.mockClear();
+
+      const host = gameState.players.find((p) => p.id === hostId)!;
+
+      // Retry until a bot holds both deciding roles (the host's role is only
+      // known once they pick their paper).
+      if (host.role === GameRole.RAJA || host.role === GameRole.POLICE) {
+        continue;
+      }
+
+      const unpickedPaper = gameState.papers.find(
+        (paper) => !paper.selectedBy,
+      )!;
+      gameService.pickPaper(roomCode, hostId, unpickedPaper.id);
+
+      if (gameState.phase !== GamePhase.ROLE_REVEAL) {
+        continue;
+      }
+
+      const rajaAfterPick = gameState.players.find(
+        (p) => p.role === GameRole.RAJA,
+      )!;
+      if (!rajaAfterPick.isBot) {
+        continue;
+      }
+
+      botService.onGameStateAdvanced(roomCode); // schedules bot Babu's pick
+
+      if (isHumanlikeDelay(setTimeoutSpy.mock.calls)) {
+        babuDelaySeen = true;
+      }
+
+      advanceBots(); // bot Babu selects the target
+
+      if (gameState.phase !== GamePhase.GUESSING) {
+        continue;
+      }
+
+      const policeAfterPick = gameState.players.find(
+        (p) => p.role === GameRole.POLICE,
+      )!;
+      if (!policeAfterPick.isBot) {
+        continue;
+      }
+
+      setTimeoutSpy.mockClear();
+      botService.onGameStateAdvanced(roomCode); // schedules bot Police's arrest
+
+      if (isHumanlikeDelay(setTimeoutSpy.mock.calls)) {
+        policeDelaySeen = true;
+      }
+
+      advanceBots(); // bot Police arrests
+
+      if (gameState.phase === GamePhase.ROUND_RESULT) {
+        finished = true;
+      }
+    }
+
+    setTimeoutSpy.mockRestore();
+
+    expect(babuDelaySeen).toBe(true);
+    expect(policeDelaySeen).toBe(true);
     expect(finished).toBe(true);
   });
 
