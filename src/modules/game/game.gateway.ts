@@ -173,8 +173,10 @@ export class GameGateway
         // seeing the reveal screen.
         this.emitPublicRoleReveal(roomCode);
         this.emitPrivateRoles(roomCode);
+        this.botService.onRolesRevealed(roomCode);
       }
 
+      this.botService.onPlayerPicked(roomCode);
       this.botService.onGameStateAdvanced(roomCode);
     } catch (error: unknown) {
       this.emitError(client, error);
@@ -205,6 +207,7 @@ export class GameGateway
         gameState: this.gameService.getPublicGameState(roomCode),
       });
 
+      this.botService.onTargetSelected(roomCode);
       this.botService.onGameStateAdvanced(roomCode);
     } catch (error: unknown) {
       this.emitError(client, error);
@@ -233,6 +236,8 @@ export class GameGateway
       this.server.to(roomCode).emit('game:police-selecting', {
         selectedPlayerId: payload?.selectedPlayerId,
       });
+
+      this.botService.onSuspectSelected(roomCode);
     } catch (error: unknown) {
       this.emitError(client, error);
     }
@@ -448,6 +453,7 @@ export class GameGateway
     if (state.phase === GamePhase.ROLE_REVEAL) {
       this.emitPublicRoleReveal(roomCode);
       this.emitPrivateRoles(roomCode);
+      this.botService.onRolesRevealed(roomCode);
     }
 
     this.botService.onGameStateAdvanced(roomCode);
@@ -465,6 +471,7 @@ export class GameGateway
       gameState: this.gameService.getPublicGameState(roomCode),
     });
 
+    this.botService.onTargetSelected(roomCode);
     this.botService.onGameStateAdvanced(roomCode);
   }
 

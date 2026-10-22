@@ -15,4 +15,10 @@ export const ALLOWED_REACTIONS: ReadonlySet<string> = new Set([
   '🔥',
   '👀',
   '👍',
+  '💀',
+  '😎',
+  '🥳',
+  '😤',
+  '👏',
+  '⏳',
 ]);

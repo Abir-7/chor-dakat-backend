@@ -3,7 +3,7 @@ import { randomInt } from 'node:crypto';
 import type { Server } from 'socket.io';
 
 import { GameService } from './game.service.js';
-import { GamePhase } from './game.types.js';
+import { GamePhase, GameState } from './game.types.js';
 import { GameRole } from './game-role.enum.js';
 import { ALLOWED_REACTIONS } from '../chat/reactions.js';
 
@@ -32,15 +32,40 @@ const BOT_THINK_MS = 1200;
 const BOT_THINK_JITTER_MS = 2200;
 /** Per-bot stagger so bots rarely pick in the same instant. */
 const BOT_STAGGER_MS = 400;
-/** Babu and the Police "think" like a human decision: 7-10 seconds. */
-const BOT_DECIDE_MIN_MS = 7000;
-const BOT_DECIDE_MAX_MS = 10000;
+/** Babu and the Police "think" like a human decision: 10-12 seconds. */
+const BOT_DECIDE_MIN_MS = 10000;
+const BOT_DECIDE_MAX_MS = 12000;
 
 const TOTAL_REACTION_CHANCE = 0.45;
 const REACTION_EXTRA_MS = 2400;
 
-const CAUGHT_REACTIONS = ['😭', '😱', '😂', '👀'];
-const MISSED_REACTIONS = ['🔥', '😂', '👍', '🤝'];
+// Round-end reactions depend on what the result means for that bot, so the
+// room sees a believable mix instead of the same four emojis every round.
+const CAUGHT_THIEF_REACTIONS = ['😭', '😱', '💀', '😂'];
+const ESCAPED_THIEF_REACTIONS = ['🔥', '😎', '😂', '👍'];
+const POLICE_SUCCESS_REACTIONS = ['👑', '🕵️', '👍', '🥳'];
+const POLICE_FAILURE_REACTIONS = ['😕', '🤫', '👀', '😤'];
+const RAJA_SUCCESS_REACTIONS = ['👑', '🥳', '👍'];
+const RAJA_FAILURE_REACTIONS = ['😕', '🤫', '😤'];
+const INNOCENT_SUCCESS_REACTIONS = ['🔥', '👏', '👍'];
+const INNOCENT_FAILURE_REACTIONS = ['😂', '🤝', '😕'];
+/** Babu's public command: nothing secret is given away by these. */
+const BABU_COMMAND_REACTIONS = ['👑', '🤫', '🕵️'];
+
+/** Role reveal: Babu and Police are public, suspects stay quiet on purpose. */
+const REVEAL_RAJA_REACTIONS = ['👑', '🥳'];
+const REVEAL_POLICE_REACTIONS = ['🕵️', '🤫', '👀'];
+const REVEAL_INNOCENT_REACTIONS = ['👀', '😂', '👍', '😱'];
+/** Watching slips disappear from the table — role-blind by design. */
+const PAPER_PICK_REACTIONS = ['👀', '😂', '🤫', '👍'];
+/** Babu has named the thief the Police must catch. */
+const TARGET_SELECTED_REACTIONS = ['😱', '👀', '🔥', '🤫'];
+/** The Police is hovering over a suspect. */
+const SUSPECT_SELECTED_REACTIONS = ['👀', '😱', '🤫'];
+/** While the Police keeps everyone waiting. */
+const POLICE_THINKING_REACTIONS = ['😤', '👀', '😂', '⏳'];
+const MATCH_WIN_REACTIONS = ['🥳', '👑', '🔥', '👏'];
+const MATCH_LOSE_REACTIONS = ['😭', '😤', '🤝', '💀'];
 
 interface BotReaction {
   senderId: string;
@@ -66,6 +91,8 @@ export class BotService {
   private readonly roomTimers = new Map<string, Set<NodeJS.Timeout>>();
   /** Dedupes scheduled bot actions across re-runs of the scheduler. */
   private readonly scheduledActions = new Map<string, Set<string>>();
+  /** Makes every spontaneous reaction timer key unique. */
+  private reactionSequence = 0;
 
   setServer(server: Server): void {
     this.server = server;
@@ -90,6 +117,46 @@ export class BotService {
     this.scheduleTurns(roomCode);
   }
 
+  /** Public roles just opened: Babu and Police gloat, citizens gasp. */
+  onRolesRevealed(roomCode: string): void {
+    this.reactWithBots(roomCode, 50, (bot) => {
+      if (bot.role === GameRole.RAJA) {
+        return REVEAL_RAJA_REACTIONS;
+      }
+
+      if (bot.role === GameRole.POLICE) {
+        return REVEAL_POLICE_REACTIONS;
+      }
+
+      if (bot.role === GameRole.CHOR || bot.role === GameRole.DAKAT) {
+        // Their role is still masked publicly: any emoji here could leak it.
+        return null;
+      }
+
+      return REVEAL_INNOCENT_REACTIONS;
+    });
+  }
+
+  /** Someone (human or bot) took a slip: the table notices, role-blind. */
+  onPlayerPicked(roomCode: string): void {
+    this.reactWithBots(roomCode, 30, () => PAPER_PICK_REACTIONS, 1);
+  }
+
+  /** Babu named the target thief: suspense ripples through the room. */
+  onTargetSelected(roomCode: string): void {
+    this.reactWithBots(roomCode, 45, () => TARGET_SELECTED_REACTIONS, 2);
+  }
+
+  /** The Police is hovering over a suspect right now. */
+  onSuspectSelected(roomCode: string): void {
+    this.reactWithBots(roomCode, 20, () => SUSPECT_SELECTED_REACTIONS, 1);
+  }
+
+  /** The Police is taking a while: someone in the room gets impatient. */
+  onPoliceThinking(roomCode: string): void {
+    this.reactWithBots(roomCode, 25, () => POLICE_THINKING_REACTIONS, 1);
+  }
+
   /**
    * Called right after a round result (or match end) is broadcast: bots chip
    * in with an emotional reaction, like players do after a catch or a miss.
@@ -105,6 +172,20 @@ export class BotService {
       return;
     }
 
+    // Match over: celebrate the winner, groan for everyone else.
+    if (game.phase === GamePhase.GAME_OVER) {
+      this.reactWithBots(
+        roomCode,
+        85,
+        (bot) =>
+          bot.id === game.winnerPlayerId
+            ? MATCH_WIN_REACTIONS
+            : MATCH_LOSE_REACTIONS,
+        3,
+      );
+      return;
+    }
+
     const bots = game.players.filter((player) => player.isBot);
 
     for (const bot of bots) {
@@ -112,7 +193,7 @@ export class BotService {
         continue;
       }
 
-      const pool = caught ? CAUGHT_REACTIONS : MISSED_REACTIONS;
+      const pool = this.roundEndReactionPool(game, bot, caught);
 
       this.scheduleTimer(
         roomCode,
@@ -121,6 +202,36 @@ export class BotService {
         () => this.emitReaction(roomCode, bot.id, pool),
       );
     }
+  }
+
+  /**
+   * Picks a reaction that fits the bot's own part in the round: a caught
+   * thief groans, an escaped one gloats, and the Police celebrate or sulk.
+   */
+  private roundEndReactionPool(
+    game: GameState,
+    bot: { id: string; role?: GameRole },
+    caught: boolean,
+  ): string[] {
+    const wasArrested = game.selectedPlayerId === bot.id;
+
+    if (wasArrested && caught) {
+      return CAUGHT_THIEF_REACTIONS;
+    }
+
+    if (bot.role === GameRole.CHOR || bot.role === GameRole.DAKAT) {
+      return ESCAPED_THIEF_REACTIONS;
+    }
+
+    if (bot.role === GameRole.POLICE) {
+      return caught ? POLICE_SUCCESS_REACTIONS : POLICE_FAILURE_REACTIONS;
+    }
+
+    if (bot.role === GameRole.RAJA) {
+      return caught ? RAJA_SUCCESS_REACTIONS : RAJA_FAILURE_REACTIONS;
+    }
+
+    return caught ? INNOCENT_SUCCESS_REACTIONS : INNOCENT_FAILURE_REACTIONS;
   }
 
   /** Cancels every pending bot timer for a room (abort, lobby, room empty). */
@@ -189,6 +300,17 @@ export class BotService {
         (player) => player.role === GameRole.POLICE,
       );
 
+      if (!game.selectedPlayerId) {
+        // Someone in the room gets impatient while the arrest is pending —
+        // works for a bot Police and for a human who is taking their time.
+        this.scheduleTimer(
+          roomCode,
+          'reaction:police-thinking',
+          3500 + randomInt(2000),
+          () => this.onPoliceThinking(roomCode),
+        );
+      }
+
       if (police?.isBot && !game.selectedPlayerId) {
         this.scheduleTimer(
           roomCode,
@@ -208,7 +330,7 @@ export class BotService {
     );
   }
 
-  /** Babu's command and the Police arrest land somewhere in a 7-10s window. */
+  /** Babu's command and the Police arrest land somewhere in a 10-12s window. */
   private decideDelay(): number {
     return BOT_DECIDE_MIN_MS + randomInt(BOT_DECIDE_MAX_MS - BOT_DECIDE_MIN_MS);
   }
@@ -287,8 +409,68 @@ export class BotService {
     }
   }
 
+  /**
+   * Lets up to `maxBots` bots chime in with emojis from their own pool.
+   * Pools can be null to keep that bot quiet (e.g. to avoid role leaks).
+   */
+  private reactWithBots(
+    roomCode: string,
+    chancePercent: number,
+    poolFor: (bot: GameState['players'][number]) => string[] | null,
+    maxBots = 2,
+  ): void {
+    if (!this.server) {
+      return;
+    }
+
+    const game = this.gameService.getGameState(roomCode);
+
+    if (!game) {
+      return;
+    }
+
+    let sent = 0;
+
+    for (const bot of game.players) {
+      if (!bot.isBot || sent >= maxBots) {
+        continue;
+      }
+
+      if (randomInt(100) >= chancePercent) {
+        continue;
+      }
+
+      const pool = poolFor(bot);
+
+      if (!pool || pool.length === 0) {
+        continue;
+      }
+
+      sent += 1;
+      this.reactionSequence += 1;
+
+      this.scheduleTimer(
+        roomCode,
+        `reaction:${this.reactionSequence}:${bot.id}`,
+        600 + randomInt(REACTION_EXTRA_MS),
+        () => this.emitReaction(roomCode, bot.id, pool),
+      );
+    }
+  }
+
   private maybeReactAfterAction(roomCode: string, botId: string): void {
-    this.scheduleBotReaction(roomCode, botId, TOTAL_REACTION_CHANCE);
+    const game = this.gameService.getGameState(roomCode);
+    const bot = game?.players.find((player) => player.id === botId);
+
+    // Babu's target call is public, so a crown/secret-agent emoji reveals
+    // nothing. Paper picks stay role-blind on purpose: reacting as the Raja
+    // there would leak the bot's freshly drawn role to the whole room.
+    const pool =
+      bot?.role === GameRole.RAJA
+        ? BABU_COMMAND_REACTIONS
+        : [...ALLOWED_REACTIONS];
+
+    this.scheduleBotReaction(roomCode, botId, TOTAL_REACTION_CHANCE, pool);
   }
 
   private scheduleRoundStartReaction(roomCode: string): void {
@@ -303,6 +485,7 @@ export class BotService {
     roomCode: string,
     botId: string | undefined,
     chance: number,
+    pool?: string[],
   ): void {
     if (!this.server) {
       return;
@@ -341,7 +524,7 @@ export class BotService {
       roomCode,
       `reaction:${botIdToUse}:${Date.now()}`,
       800 + randomInt(REACTION_EXTRA_MS),
-      () => this.emitReaction(roomCode, botIdToUse!, [...ALLOWED_REACTIONS]),
+      () => this.emitReaction(roomCode, botIdToUse!, pool ?? [...ALLOWED_REACTIONS]),
     );
   }
 

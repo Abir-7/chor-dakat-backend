@@ -207,14 +207,14 @@ describe('BotService', () => {
     expect(finished).toBe(true);
   });
 
-  it('bot Babu and bot Police wait like a human: at least 7s, at most 10s', () => {
+  it('bot Babu and bot Police wait like a human: at least 10s, at most 12s', () => {
     const { roomCode, hostId, players } = ctx;
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
 
     const isHumanlikeDelay = (calls: unknown[][]) =>
       calls.some((call) => {
         const delay = Number(call[1]);
-        return delay >= 7000 && delay < 10000;
+        return delay >= 10000 && delay < 12000;
       });
 
     let babuDelaySeen = false;
