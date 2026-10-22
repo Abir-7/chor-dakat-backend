@@ -14,7 +14,11 @@ import type {
 } from './room.types.js';
 
 /** How long a disconnected seat is held before it is released. */
-export const DISCONNECT_GRACE_MS = 2 * 60 * 1000;
+// Phones routinely lock/sleep mid-game for a couple of minutes: the socket
+// drops, but the seat must survive until the player unlocks and returns.
+// Five minutes covers most screen-off pauses; reclaiming by PIN still remains
+// as the fallback after the seat is finally released.
+export const DISCONNECT_GRACE_MS = 5 * 60 * 1000;
 
 /** Fallback names when the host adds a bot without choosing one. */
 const BOT_NAME_POOL = [
