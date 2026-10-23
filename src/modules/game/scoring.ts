@@ -6,7 +6,7 @@ export const ROLE_SCORES: Record<GameRole, number> = {
   [GameRole.CHOR]: 500,
   [GameRole.DAKAT]: 400,
   [GameRole.JHARUDAR]: 200,
-  [GameRole.CLEANER]: 200,
+  [GameRole.CLEANER]: 150,
   [GameRole.PAGOL]: 50,
   [GameRole.CHAGOL]: 100,
 };
