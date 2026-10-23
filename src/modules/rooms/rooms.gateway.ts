@@ -341,14 +341,19 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         throw new Error('This connection is no longer active.');
       }
 
-      const room = this.roomsService.removePlayer(roomCode, playerId);
-
+      // Leave the socket room BEFORE removing the seat: removing the seat
+      // notifies the game layer, which broadcasts 'game:aborted' to the room
+      // for the players who stay. Leaving first keeps that broadcast — and
+      // every other room message — away from this player, who is already
+      // back on the main screen and must not see "a player left".
       this.activeSocketIds.delete(playerKey);
 
       delete client.data.roomCode;
       delete client.data.playerId;
 
       void client.leave(roomCode);
+
+      const room = this.roomsService.removePlayer(roomCode, playerId);
 
       if (!room) {
         this.server.to(roomCode).emit('room:closed', {
