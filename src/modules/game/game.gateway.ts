@@ -108,6 +108,19 @@ export class GameGateway
     console.log(`Game socket disconnected: ${client.id}`);
   }
 
+  @SubscribeMessage('game:sync')
+  handleGameSync(@ConnectedSocket() client: Socket): void {
+    try {
+      const { roomCode, playerId } = this.validateRoomMembership(client);
+
+      // Explicit pull-based resync: the reconnect push can be lost in a
+      // refresh race, so the client asks again after landing in the room.
+      this.handlePlayerReconnectedGameSync(roomCode, playerId);
+    } catch (error: unknown) {
+      this.emitError(client, error);
+    }
+  }
+
   @SubscribeMessage('game:start')
   handleStartGame(
     @ConnectedSocket() client: Socket,
@@ -120,6 +133,20 @@ export class GameGateway
 
       if (room.hostId !== playerId) {
         throw new BadRequestException('Only the host can start the game.');
+      }
+
+      // A round may already be live (e.g. the client missed the reconnect
+      // sync after a refresh). Pull the host back into the running game
+      // instead of failing with 'A game is already in progress.'
+      const existingGame = this.gameService.getGameState(roomCode);
+
+      if (
+        existingGame &&
+        existingGame.phase !== GamePhase.ROUND_RESULT &&
+        existingGame.phase !== GamePhase.GAME_OVER
+      ) {
+        this.handlePlayerReconnectedGameSync(roomCode, playerId);
+        return;
       }
 
       this.validateConnectedPlayers(roomCode);
