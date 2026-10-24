@@ -39,6 +39,11 @@ const BOT_DECIDE_MAX_MS = 12000;
 const TOTAL_REACTION_CHANCE = 0.45;
 const REACTION_EXTRA_MS = 2400;
 
+/** How long the bot Police's "target highlighted" beat lasts before the
+ *  arrest resolves — double duty as the suspense the room gets to feel.
+ *  Long enough that everyone notices whom the bot Police is pointing at. */
+const POLICE_ARREST_BEAT_MS = 3200;
+
 // Round-end reactions depend on what the result means for that bot, so the
 // room sees a believable mix instead of the same four emojis every round.
 const CAUGHT_THIEF_REACTIONS = ['😭', '😱', '💀', '😂'];
@@ -402,11 +407,37 @@ export class BotService {
 
     const suspect = suspects[randomInt(suspects.length)];
 
-    try {
-      this.handlers?.guessPlayer(roomCode, botId, suspect.id);
-    } catch (error) {
-      this.logBotFailure(roomCode, 'make an arrest', error);
-    }
+    // Show the room whom the bot Police is pointing at BEFORE the arrest:
+    // the same `game:police-selecting` highlight a human Police's picks
+    // broadcast, so the target lights up for every player first. The
+    // `autoConfirm` flag tells clients this pick will resolve by itself,
+    // so they can play the Confirm-arrest button press for the room.
+    this.server?.to(roomCode).emit('game:police-selecting', {
+      selectedPlayerId: suspect.id,
+      autoConfirm: true,
+    });
+
+    // A short beat so the highlight is actually seen, then the arrest lands.
+    this.scheduleTimer(
+      roomCode,
+      `arrest:${botId}`,
+      POLICE_ARREST_BEAT_MS,
+      () => {
+        const now = this.gameService.getGameState(roomCode);
+        if (
+          !now ||
+          now.phase !== GamePhase.GUESSING ||
+          now.selectedPlayerId
+        ) {
+          return;
+        }
+        try {
+          this.handlers?.guessPlayer(roomCode, botId, suspect.id);
+        } catch (error) {
+          this.logBotFailure(roomCode, 'make an arrest', error);
+        }
+      },
+    );
   }
 
   /**

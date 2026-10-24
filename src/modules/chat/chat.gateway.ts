@@ -18,6 +18,16 @@ interface SendReactionPayload {
   reaction: string;
 }
 
+interface ChatMessageEntry {
+  senderId: string;
+  senderName: string;
+  message: string;
+  timestamp: string;
+}
+
+/** Messages kept per room so a refresh/reconnect can replay the chat. */
+const MAX_HISTORY_PER_ROOM = 100;
+
 @WebSocketGateway({
   cors: {
     origin: '*',
@@ -26,6 +36,9 @@ interface SendReactionPayload {
 export class ChatGateway {
   @WebSocketServer()
   server!: Server;
+
+  /** Room-wise chat history: roomCode -> messages (oldest first). */
+  private readonly chatHistory = new Map<string, ChatMessageEntry[]>();
 
   constructor(private readonly roomsService: RoomsService) {}
 
@@ -51,18 +64,55 @@ export class ChatGateway {
         throw new BadRequestException('Message cannot exceed 200 characters.');
       }
 
-      this.server.to(roomCode).emit('chat:message', {
+      const entry: ChatMessageEntry = {
         senderId: playerId,
         senderName: playerName,
         message,
         timestamp: new Date().toISOString(),
-      });
+      };
+      this.storeMessage(roomCode, entry);
+
+      this.server.to(roomCode).emit('chat:message', entry);
     } catch (error: unknown) {
       client.emit('chat:error', {
         message:
           error instanceof Error ? error.message : 'Failed to send message',
       });
     }
+  }
+
+  /**
+   * Player asks for the chat that already happened in this room (used after
+   * a page refresh or to bring a returning player up to date).
+   */
+  @SubscribeMessage('chat:history')
+  handleChatHistory(@ConnectedSocket() client: Socket): void {
+    try {
+      const { roomCode } = this.validateSender(client);
+      client.emit('chat:history', this.chatHistory.get(roomCode) ?? []);
+    } catch {
+      // Not in a room (yet): nothing to replay.
+      client.emit('chat:history', []);
+    }
+  }
+
+  /** Append a message to the room's history, dropping dead rooms. */
+  private storeMessage(roomCode: string, entry: ChatMessageEntry): void {
+    // Rooms are removed when everyone leaves; drop their history too.
+    for (const code of this.chatHistory.keys()) {
+      if (!this.roomsService.getRoomIfExists(code)) {
+        this.chatHistory.delete(code);
+      }
+    }
+
+    const history = this.chatHistory.get(roomCode) ?? [];
+    history.push(entry);
+
+    if (history.length > MAX_HISTORY_PER_ROOM) {
+      history.splice(0, history.length - MAX_HISTORY_PER_ROOM);
+    }
+
+    this.chatHistory.set(roomCode, history);
   }
 
   @SubscribeMessage('chat:send-reaction')
